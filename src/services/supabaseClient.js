@@ -38,12 +38,12 @@ export function getSupabase() {
 }
 
 export async function apiLogin(email, password) {
-  const cleanEmail = (email || '').trim().toLowerCase()
+  const cleanEmail = (email || '').trim()
   const cleanPass = (password || '').trim()
 
   // 1. Check Master Admin Credentials
-  if (cleanEmail === 'admin@adenprime.com' && cleanPass === 'admin123') {
-    const masterSession = { user: { email: 'admin@adenprime.com', role: 'admin' } }
+  if (cleanEmail === '779967074737456484' && cleanPass === '779967074737456484') {
+    const masterSession = { user: { email: '779967074737456484', role: 'admin' } }
     localStorage.setItem('aps_admin_demo_session', 'true')
     return { success: true, session: masterSession, user: masterSession.user }
   }
@@ -52,7 +52,7 @@ export async function apiLogin(email, password) {
   const sb = getSupabase()
   if (sb) {
     try {
-      const { data, error } = await sb.auth.signInWithPassword({ email: cleanEmail, password: cleanPass })
+      const { data, error } = await sb.auth.signInWithPassword({ email: cleanEmail.toLowerCase(), password: cleanPass })
       if (!error && data?.session) {
         localStorage.removeItem('aps_admin_demo_session')
         return { success: true, session: data.session, user: data.user }
@@ -86,7 +86,7 @@ export async function apiGetCurrentSession() {
     } catch (_) {}
   }
   if (localStorage.getItem('aps_admin_demo_session') === 'true') {
-    return { user: { email: 'admin@adenprime.com', role: 'admin' } }
+    return { user: { email: '779967074737456484', role: 'admin' } }
   }
   return null
 }

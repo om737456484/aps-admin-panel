@@ -6,7 +6,7 @@ import path from 'path'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
-  base: './',
+  base: '/aps-admin-panel/',
   root: __dirname,
   plugins: [react()],
   server: {
