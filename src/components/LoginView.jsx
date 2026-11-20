@@ -64,7 +64,7 @@ export default function LoginView({ onLoginSuccess }) {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="779967074737456484"
+                  placeholder="أدخل اسم المستخدم أو البريد الإلكتروني"
                   className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all text-slate-800"
                 />
                 <Mail size={18} className="absolute right-3.5 top-3 text-slate-400" />
@@ -81,7 +81,7 @@ export default function LoginView({ onLoginSuccess }) {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
+                  placeholder="أدخل كلمة المرور"
                   className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all text-slate-800 font-mono"
                 />
                 <Lock size={18} className="absolute right-3.5 top-3 text-slate-400" />
