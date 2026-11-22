@@ -93,15 +93,14 @@ export async function apiGetCurrentSession() {
 
 const DEFAULT_AUTH_SECRET = 'APS-AUTH-KEY-2026-c7e9f1a2b3d4e5f67890abcdef123456'
 
-export async function generateOfflineCodeBrowser({ requestCode, daysGranted = 365, secret = DEFAULT_AUTH_SECRET }) {
+export async function generateOfflineCodeBrowser({ requestCode, daysGranted = 365, maxDevices = 1, secret = DEFAULT_AUTH_SECRET }) {
   const cleanReq = String(requestCode || '').trim().replace(/\s+/g, '').toUpperCase()
   const enc = new TextEncoder()
   const reqHashBuf = await crypto.subtle.digest('SHA-256', enc.encode(cleanReq))
   const reqHashHex = Array.from(new Uint8Array(reqHashBuf)).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase()
-  const requestPrefix = reqHashHex.slice(0, 10)
 
   const days = Math.max(1, Math.min(65535, Number(daysGranted) || 365))
-  const checksumInput = JSON.stringify({ v: 1, d: days, rp: requestPrefix })
+  const devices = Math.max(1, Math.min(65535, Number(maxDevices) || 1))
 
   const key = await crypto.subtle.importKey(
     'raw',
@@ -110,6 +109,39 @@ export async function generateOfflineCodeBrowser({ requestCode, daysGranted = 36
     false,
     ['sign']
   )
+
+  // Version 2 encodes both duration (days) and authorized devices count
+  if (devices > 1 || maxDevices !== undefined) {
+    const requestPrefix = reqHashHex.slice(0, 8) // 4 bytes = 8 hex chars
+    const checksumInput = JSON.stringify({ v: 2, d: days, m: devices, rp: requestPrefix })
+    const sigBuf = await crypto.subtle.sign('HMAC', key, enc.encode(checksumInput))
+    const checksum6 = new Uint8Array(sigBuf).slice(0, 6)
+
+    // Header 9 bytes: [version (2), days (uint16be), devices (uint16be), requestPrefix (4 bytes)]
+    const header = new Uint8Array(9)
+    header[0] = 2
+    header[1] = (days >> 8) & 0xff
+    header[2] = days & 0xff
+    header[3] = (devices >> 8) & 0xff
+    header[4] = devices & 0xff
+    for (let i = 0; i < 4; i++) {
+      header[5 + i] = parseInt(requestPrefix.substr(i * 2, 2), 16)
+    }
+
+    const combined = new Uint8Array(15)
+    combined.set(header, 0)
+    combined.set(checksum6, 9)
+
+    let value = 0n
+    for (const b of combined) {
+      value = (value << 8n) | BigInt(b)
+    }
+    return value.toString(36).toUpperCase().padStart(25, '0').slice(-25)
+  }
+
+  // Version 1 fallback (single device)
+  const requestPrefix = reqHashHex.slice(0, 10)
+  const checksumInput = JSON.stringify({ v: 1, d: days, rp: requestPrefix })
   const sigBuf = await crypto.subtle.sign('HMAC', key, enc.encode(checksumInput))
   const checksum7 = new Uint8Array(sigBuf).slice(0, 7)
 

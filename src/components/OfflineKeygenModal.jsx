@@ -6,6 +6,7 @@ import { useToast } from '../context/ToastContext'
 export default function OfflineKeygenModal({ isOpen, onClose }) {
   const [requestCode, setRequestCode] = useState('')
   const [days, setDays] = useState(365)
+  const [devices, setDevices] = useState(101)
   const [companyName, setCompanyName] = useState('')
   const [generatedCode, setGeneratedCode] = useState('')
   const [loading, setLoading] = useState(false)
@@ -26,6 +27,7 @@ export default function OfflineKeygenModal({ isOpen, onClose }) {
       const code = await generateOfflineCodeBrowser({
         requestCode: requestCode.trim(),
         daysGranted: Number(days) || 365,
+        maxDevices: Number(devices) || 1,
       })
       setGeneratedCode(code)
       showToast('تم توليد كود التفعيل المعتمد بنجاح', 'success')
@@ -57,7 +59,7 @@ export default function OfflineKeygenModal({ isOpen, onClose }) {
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900">مولد أكواد التفعيل اليدوية (Offline)</h3>
-              <p className="text-xs text-slate-500">للأجهزة والمنشآت غير المتصلة بالإنترنت (Air-gapped)</p>
+              <p className="text-xs text-slate-500">للأجهزة والمنشآت غير المتصلة بالإنترنت مع تحديد سعة الأجهزة بدقة</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 rounded-lg">
@@ -109,13 +111,46 @@ export default function OfflineKeygenModal({ isOpen, onClose }) {
             </div>
           </div>
 
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              عدد الأجهزة المصرح بها على الشبكة (Device Limit)
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min="1"
+                max="65535"
+                required
+                value={devices}
+                onChange={(e) => setDevices(Math.max(1, parseInt(e.target.value) || 1))}
+                className="flex-1 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-blue-600"
+              />
+              <div className="flex gap-1">
+                {[1, 5, 10, 101].map((val) => (
+                  <button
+                    type="button"
+                    key={val}
+                    onClick={() => setDevices(val)}
+                    className={`px-2.5 py-1 text-xs font-mono rounded-lg border transition-colors ${
+                      devices === val
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                    }`}
+                  >
+                    {val}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           <button
             type="submit"
             disabled={loading}
             className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-sm font-bold shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-2"
           >
             <Sparkles size={16} />
-            <span>{loading ? 'جاري التوقيع والتوليد...' : 'توليد كود التفعيل الرقمي'}</span>
+            <span>{loading ? 'جاري التوقيع والتوليد...' : 'توليد كود التفعيل الرقمي (V2 مع سعة الأجهزة)'}</span>
           </button>
 
           {/* Generated Code Display */}
@@ -124,12 +159,17 @@ export default function OfflineKeygenModal({ isOpen, onClose }) {
               <div className="flex items-center justify-between text-xs text-slate-400">
                 <span>كود التفعيل الصالح (25 خانة):</span>
                 <span className="text-emerald-400 font-semibold flex items-center gap-1">
-                  <ShieldCheck size={14} /> موقّع ومحمي رقمياً
+                  <ShieldCheck size={14} /> مشفر وموقع رقمياً (V2)
                 </span>
               </div>
 
               <div className="font-mono text-center text-lg font-bold tracking-widest text-amber-400 bg-black/40 py-2.5 px-3 rounded-lg border border-white/10 select-all">
                 {formattedDisplay}
+              </div>
+
+              <div className="flex justify-between items-center text-[11px] text-slate-300 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
+                <span>المدة: <strong className="text-white font-mono">{days}</strong> يوم</span>
+                <span>الأجهزة المصرح بها: <strong className="text-emerald-400 font-mono">{devices}</strong> أجهزة</span>
               </div>
 
               <div className="flex gap-2">
