@@ -18,8 +18,11 @@ export default function Sidebar({
   const menuItems = [
     { id: 'dashboard', label: 'لوحة المؤشرات', icon: LayoutDashboard, desc: 'نظرة عامة والنبض الحي' },
     { id: 'subscribers', label: 'المشتركون والمنشآت', icon: Users, desc: 'التراخيص والتمديد والرموز' },
+    { id: 'offline-activation', label: 'التفعيل اليدوي (Offline)', icon: Key, desc: 'Challenge–Response والتصاريح' },
     { id: 'devices', label: 'الأجهزة ونقاط البيع', icon: Laptop, desc: 'مراقبة العتاد و Kill-Switch' },
+    { id: 'payments', label: 'المدفوعات والمقبوضات', icon: Database, desc: 'توثيق السندات والاشتراكات' },
     { id: 'plans', label: 'باقات الاشتراك', icon: Layers, desc: 'تخصيص الميزات والأسعار' },
+    { id: 'roles', label: 'الأدوار والصلاحيات', icon: Settings2, desc: 'صلاحيات RBAC والأمان' },
     { id: 'logs', label: 'سجل العمليات والتدقيق', icon: Activity, desc: 'تتبع الأحداث والتفعيلات' },
   ]
 

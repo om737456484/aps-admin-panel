@@ -6,6 +6,9 @@ import SubscribersView from './components/SubscribersView'
 import DevicesView from './components/DevicesView'
 import PlansView from './components/PlansView'
 import LogsView from './components/LogsView'
+import OfflineActivationView from './components/OfflineActivationView'
+import PaymentsView from './components/PaymentsView'
+import RolesView from './components/RolesView'
 import ConfigModal from './components/ConfigModal'
 import LoginView from './components/LoginView'
 import OfflineKeygenModal from './components/OfflineKeygenModal'
@@ -186,8 +189,11 @@ export default function App() {
         <main className="flex-1 p-6 sm:p-8 max-w-7xl w-full mx-auto">
           {activeTab === 'dashboard' && <DashboardView onNavigate={handleNavigate} />}
           {activeTab === 'subscribers' && <SubscribersView initialOpenAdd={initialOpenAddSub} onOpenKeygen={() => setIsKeygenOpen(true)} />}
+          {activeTab === 'offline-activation' && <OfflineActivationView />}
           {activeTab === 'devices' && <DevicesView />}
+          {activeTab === 'payments' && <PaymentsView />}
           {activeTab === 'plans' && <PlansView />}
+          {activeTab === 'roles' && <RolesView />}
           {activeTab === 'logs' && <LogsView />}
         </main>
 
