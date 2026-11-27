@@ -1,30 +1,33 @@
 import React, { useState } from 'react'
 import {
   KeyRound, ShieldCheck, Download, Copy, Check, AlertCircle, FileText,
-  Calendar, Layers, Monitor, HardDrive, RefreshCw
+  RefreshCw, Eye, EyeOff, Lock
 } from 'lucide-react'
-import { getSupabase } from '../services/supabaseClient'
+import { getSupabase, generateOfflineCodeBrowser, safeAuditLog } from '../services/supabaseClient'
 
 export default function OfflineActivationView() {
+  const hasEnvSecret = Boolean(import.meta.env.VITE_LICENSE_AUTHORITY_SECRET)
   const [requestCode, setRequestCode] = useState('')
   const [parsedRequest, setParsedRequest] = useState(null)
   const [parseError, setParseError] = useState('')
   const [selectedPlan, setSelectedPlan] = useState('pro')
   const [durationDays, setDurationDays] = useState(365)
   const [maxDevices, setMaxDevices] = useState(3)
-  const [maxServers, setMaxServers] = useState(1)
   const [companyName, setCompanyName] = useState('')
-  const [offlineGraceDays, setOfflineGraceDays] = useState(30)
-  const [lifetimePolicy, setLifetimePolicy] = useState('permanent_offline')
+  const [signingSecret, setSigningSecret] = useState('')
+  const [showSecret, setShowSecret] = useState(false)
+  const [generateError, setGenerateError] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatedResult, setGeneratedResult] = useState(null)
-  const [copiedToken, setCopiedToken] = useState(false)
+  const [copiedCert, setCopiedCert] = useState(false)
   const [copiedCode, setCopiedCode] = useState(false)
 
   // Handle parsing Request Code
   const handleParseCode = () => {
     setParseError('')
+    setGenerateError('')
     setParsedRequest(null)
+    setGeneratedResult(null)
     const clean = requestCode.trim()
     if (!clean) {
       setParseError('يرجى إدخال رمز طلب التفعيل (Request Code)')
@@ -63,94 +66,87 @@ export default function OfflineActivationView() {
     }
   }
 
-  // Handle Generating Offline License Token & Activation Code
+  // Handle Generating Compatible V2 Offline Activation Code & Certificate
   const handleGenerateLicense = async () => {
     if (!parsedRequest) return
+    setGenerateError('')
+    if (!hasEnvSecret && !signingSecret.trim()) {
+      setGenerateError('يرجى إدخال مفتاح التوقيع الإداري (Signing Secret) لتوليد كود تفعيل متوافق.')
+      return
+    }
     setIsGenerating(true)
     try {
+      const days = Math.max(1, Math.min(65535, Number(durationDays) || 365))
+      const devices = Math.max(1, Math.min(65535, Number(maxDevices) || 1))
       const now = new Date()
-      const expiresAt = new Date(now.getTime() + durationDays * 86400000)
-      const tokenId = `APS-OFFLINE-${Date.now().toString(36).toUpperCase()}`
-      const licenseKey = `APS-LIC-OFFLINE-${Math.random().toString(36).substring(2, 8).toUpperCase()}`
+      const expiresAt = new Date(now.getTime() + days * 86400000)
 
-      const claims = {
-        schema_version: 2,
-        protocol_version: '2.0',
-        key_id: 'aps-ed25519-v1',
-        token_id: tokenId,
-        license_key: licenseKey,
-        organization_name: companyName || 'شركة محلية معتمدة',
-        product_id: 'APS_ACCOUNTING',
-        installation_id: parsedRequest.installationId,
-        plan_id: selectedPlan,
-        issued_at: now.toISOString(),
-        not_before: now.toISOString(),
-        expires_at: expiresAt.toISOString(),
-        offline_grace_days: Number(offlineGraceDays),
-        lifetime_policy: lifetimePolicy,
-        maximum_servers: Number(maxServers),
-        maximum_devices: Number(maxDevices),
-        maximum_concurrent_users: Number(maxDevices),
-        license_status: 'active'
-      }
+      const rawCode = await generateOfflineCodeBrowser({
+        requestCode: parsedRequest.installationId,
+        daysGranted: days,
+        maxDevices: devices,
+        secret: signingSecret.trim() || undefined,
+      })
+      const friendlyCode = rawCode.match(/.{1,5}/g)?.join('-') || rawCode
+      const resolvedCompany = companyName.trim() || 'شركة محلية معتمدة'
+      const expiresAtLabel = expiresAt.toLocaleDateString('ar-EG')
 
-      // Canonical string
-      const sortedKeys = Object.keys(claims).sort()
-      const canonicalClaims = JSON.stringify(claims, sortedKeys)
-
-      // Signature generation using subtle crypto HMAC as deterministic proof
-      const enc = new TextEncoder()
-      const key = await window.crypto.subtle.importKey(
-        'raw',
-        enc.encode('APS-AUTH-KEY-2026-c7e9f1a2b3d4e5f67890abcdef123456'),
-        { name: 'HMAC', hash: 'SHA-256' },
-        false,
-        ['sign']
-      )
-      const sigBuf = await window.crypto.subtle.sign('HMAC', key, enc.encode(canonicalClaims))
-      const sigBase64 = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
-      const signedToken = `${btoa(unescape(encodeURIComponent(canonicalClaims)))}.${sigBase64}`
-
-      // Friendly 25-char alphanumeric activation code for fast telephone entry
-      const hashBytes = new Uint8Array(sigBuf).slice(0, 15)
-      let bigVal = 0n
-      for (const b of hashBytes) bigVal = (bigVal << 8n) | BigInt(b)
-      const cleanCode = bigVal.toString(36).toUpperCase().padStart(25, '0').slice(-25)
-      const friendlyCode = cleanCode.match(/.{1,5}/g).join('-')
+      const certificateText = [
+        '==================================================',
+        '  APS Accounting — شهادة التفعيل اليدوي (V2)',
+        '==================================================',
+        `المنشأة / العميل: ${resolvedCompany}`,
+        `الخطة التجارية: ${selectedPlan.toUpperCase()}`,
+        `كود التفعيل (25 خانة): ${friendlyCode}`,
+        `رمز الطلب (Request Code): ${parsedRequest.installationId}`,
+        `المدة المصرح بها: ${days} يوم`,
+        `الحد الأقصى للأجهزة: ${devices}`,
+        `تاريخ الإصدار: ${now.toISOString().slice(0, 10)}`,
+        `تاريخ الانتهاء التقديري: ${expiresAt.toISOString().slice(0, 10)}`,
+        '==================================================',
+        'أدخل كود التفعيل أعلاه في تبويب "التفعيل اليدوي (Offline)" داخل برنامج APS.',
+      ].join('\n')
 
       setGeneratedResult({
-        claims,
-        signedToken,
+        rawCode,
         friendlyCode,
-        expiresAt: expiresAt.toLocaleDateString('ar-YE')
+        certificateText,
+        companyName: resolvedCompany,
+        planId: selectedPlan,
+        durationDays: days,
+        maxDevices: devices,
+        expiresAt: expiresAtLabel,
       })
 
-      // Optionally record in Supabase audit if connected
+      // Record in Supabase audit using canonical schema columns
       const sb = getSupabase()
       if (sb) {
-        await sb.from('license_audit_logs').insert({
-          action: 'ISSUE_OFFLINE_LICENSE',
-          performed_by: 'admin',
-          resource_type: 'offline_license',
-          resource_id: tokenId,
-          details: { claims, friendlyCode }
-        }).catch(() => {})
+        await safeAuditLog(sb, {
+          event_type: 'offline_license_issued',
+          details: {
+            installation_id: parsedRequest.installationId,
+            company_name: resolvedCompany,
+            plan_id: selectedPlan,
+            duration_days: days,
+            max_devices: devices,
+          },
+        })
       }
     } catch (err) {
-      alert('حدث خطأ أثناء إصدار الترخيص: ' + err.message)
+      setGenerateError('حدث خطأ أثناء إصدار الترخيص: ' + err.message)
     } finally {
       setIsGenerating(false)
     }
   }
 
-  // Handle Download File
-  const handleDownloadLicenseFile = () => {
+  // Handle Download Activation Certificate (.txt)
+  const handleDownloadCertificate = () => {
     if (!generatedResult) return
-    const blob = new Blob([generatedResult.signedToken], { type: 'text/plain;charset=utf-8' })
+    const blob = new Blob([generatedResult.certificateText], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `APS-LICENSE-${parsedRequest?.installationId?.slice(0, 8) || 'KEY'}.lic`
+    a.download = `APS-ACTIVATION-${parsedRequest?.installationId?.replace(/[^A-Z0-9]/gi, '').slice(0, 8) || 'V2'}.txt`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -158,7 +154,7 @@ export default function OfflineActivationView() {
   }
 
   return (
-    <div className="p-8 max-w-6xl mx-auto space-y-8 select-none">
+    <div className="w-full space-y-6 select-none animate-fadeIn">
       {/* Page Header */}
       <div>
         <div className="flex items-center gap-3 mb-2">
@@ -167,7 +163,7 @@ export default function OfflineActivationView() {
           </div>
           <div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">إصدار التفعيل اليدوي (Offline Activation)</h1>
-            <p className="text-sm text-slate-500 font-medium">نظام التحدي والاستجابة Challenge–Response للتفعيل دون اتصال بالإنترنت</p>
+            <p className="text-sm text-slate-500 font-medium">توليد أكواد التفعيل اليدوية المتوافقة (V2) للتفعيل دون اتصال بالإنترنت</p>
           </div>
         </div>
       </div>
@@ -181,13 +177,14 @@ export default function OfflineActivationView() {
 
         <div className="space-y-2">
           <textarea
+            dir="ltr"
             value={requestCode}
             onChange={(e) => setRequestCode(e.target.value)}
             rows={3}
-            placeholder="ألصق هنا رمز الطلب المستلم من شاشة تفعيل البرنامج لدى العميل..."
-            className="w-full px-4 py-3 text-sm font-mono border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all outline-none"
+            placeholder="00DTM-BKX52-8JS88-EIEXG-L8JCL"
+            className="w-full px-4 py-3 text-sm font-mono border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all outline-none text-left"
           />
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center gap-3 flex-wrap">
             <button
               onClick={handleParseCode}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm shadow-blue-500/20 flex items-center gap-2"
@@ -203,12 +200,14 @@ export default function OfflineActivationView() {
         </div>
 
         {parsedRequest && (
-          <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center justify-between">
+          <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3">
-              <ShieldCheck size={24} className="text-emerald-600" />
+              <ShieldCheck size={24} className="text-emerald-600 shrink-0" />
               <div>
                 <p className="text-xs font-bold">تم التحقق من صحة رمز الطلب بنجاح</p>
-                <p className="text-xs font-mono text-emerald-700 mt-0.5">معرف التثبيت: {parsedRequest.installationId}</p>
+                <p className="text-xs font-mono text-emerald-700 mt-0.5" dir="ltr">
+                  {parsedRequest.installationId}
+                </p>
               </div>
             </div>
             <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800">
@@ -226,7 +225,7 @@ export default function OfflineActivationView() {
             <h3>تحديد مواصفات وشروط الترخيص الصادر</h3>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">اسم المنشأة / العميل</label>
               <input
@@ -246,7 +245,9 @@ export default function OfflineActivationView() {
                   setSelectedPlan(e.target.value)
                   if (e.target.value === 'lifetime') {
                     setDurationDays(36500)
-                    setOfflineGraceDays(36500)
+                  } else if (e.target.value === 'enterprise') {
+                    setDurationDays(365)
+                    setMaxDevices(10)
                   } else if (e.target.value === 'pro') {
                     setDurationDays(365)
                     setMaxDevices(3)
@@ -268,9 +269,11 @@ export default function OfflineActivationView() {
               <label className="block text-xs font-bold text-slate-700 mb-1.5">مدة الترخيص (بالأيام)</label>
               <input
                 type="number"
+                min="1"
+                max="65535"
                 value={durationDays}
                 onChange={(e) => setDurationDays(Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none"
+                className="w-full px-3.5 py-2.5 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none font-mono"
               />
             </div>
 
@@ -278,44 +281,56 @@ export default function OfflineActivationView() {
               <label className="block text-xs font-bold text-slate-700 mb-1.5">الحد الأقصى للأجهزة (Seats)</label>
               <input
                 type="number"
+                min="1"
+                max="65535"
                 value={maxDevices}
                 onChange={(e) => setMaxDevices(Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none"
+                className="w-full px-3.5 py-2.5 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none font-mono"
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">عدد الخوادم المسموح بها</label>
-              <input
-                type="number"
-                value={maxServers}
-                onChange={(e) => setMaxServers(Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">فترة السماح دون اتصال (Offline Grace)</label>
-              <select
-                value={offlineGraceDays}
-                onChange={(e) => setOfflineGraceDays(Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none"
-              >
-                <option value={15}>15 يوماً</option>
-                <option value={30}>30 يوماً (الافتراضي الموصى به)</option>
-                <option value={60}>60 يوماً</option>
-                <option value={36500}>دائم بدون قيود دورية</option>
-              </select>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                <Lock size={13} className="text-slate-500" />
+                <span>
+                  مفتاح التوقيع الإداري (Signing Secret){hasEnvSecret ? ' — اختياري (مضبوط في البيئة)' : ' *'}
+                </span>
+              </label>
+              <div className="relative">
+                <input
+                  type={showSecret ? 'text' : 'password'}
+                  dir="ltr"
+                  value={signingSecret}
+                  onChange={(e) => setSigningSecret(e.target.value)}
+                  placeholder={hasEnvSecret ? 'اتركه فارغاً لاستخدام المفتاح المضبوط في البيئة' : 'أدخل مفتاح التوقيع المعتمد لنظام APS'}
+                  className="w-full pl-10 pr-3.5 py-2.5 text-xs font-mono border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none text-left"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSecret(!showSecret)}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  title={showSecret ? 'إخفاء المفتاح' : 'إظهار المفتاح'}
+                >
+                  {showSecret ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
             </div>
           </div>
+
+          {generateError && (
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold flex items-center gap-2">
+              <AlertCircle size={16} className="shrink-0" />
+              <span>{generateError}</span>
+            </div>
+          )}
 
           <div className="pt-2">
             <button
               onClick={handleGenerateLicense}
               disabled={isGenerating}
-              className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold transition shadow-md shadow-emerald-600/25 flex items-center gap-2"
+              className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold transition shadow-md shadow-emerald-600/25 flex items-center gap-2 disabled:opacity-50"
             >
-              <ShieldCheck size={18} /> {isGenerating ? 'جاري توقيع وإصدار التصريح...' : 'إصدار وتوقيع تصريح الترخيص الآن'}
+              <ShieldCheck size={18} /> {isGenerating ? 'جاري توقيع وإصدار الكود...' : 'إصدار كود التفعيل المعتمد (V2)'}
             </button>
           </div>
         </div>
@@ -326,18 +341,26 @@ export default function OfflineActivationView() {
         <div className="bg-white rounded-2xl border border-emerald-200 p-6 shadow-md space-y-6">
           <div className="flex items-center gap-2 text-emerald-800 font-bold text-base">
             <span className="w-6 h-6 rounded-full bg-emerald-600 text-white text-xs flex items-center justify-center font-black">3</span>
-            <h3>بيانات التفعيل الموقعة رقمياً</h3>
+            <h3>كود التفعيل الموقّع رقمياً (V2)</h3>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Friendly 25-char Code */}
+            {/* Compatible 25-char V2 Activation Code */}
             <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-slate-700">كود التفعيل السريع (25 حرفاً)</span>
-                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">للإملاء بالهاتف والواتساب</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-extrabold text-slate-700">كود التفعيل السريع (25 حرفاً - V2)</span>
+                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded whitespace-nowrap">للإملاء بالهاتف والواتساب</span>
               </div>
-              <div className="p-3 bg-white border border-slate-200 rounded-xl font-mono text-center text-lg font-black tracking-widest text-slate-900 select-all">
+              <div
+                dir="ltr"
+                className="p-3 bg-white border border-slate-200 rounded-xl font-mono text-center text-lg font-black tracking-widest text-slate-900 select-all"
+              >
                 {generatedResult.friendlyCode}
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-slate-600 px-1">
+                <span>المدة: <strong className="font-mono text-slate-900">{generatedResult.durationDays}</strong> يوم</span>
+                <span>الأجهزة: <strong className="font-mono text-slate-900">{generatedResult.maxDevices}</strong></span>
+                <span>ينتهي: <strong className="font-mono text-slate-900">{generatedResult.expiresAt}</strong></span>
               </div>
               <button
                 onClick={() => {
@@ -352,32 +375,35 @@ export default function OfflineActivationView() {
               </button>
             </div>
 
-            {/* Signed License File */}
+            {/* Downloadable Activation Certificate (.txt) */}
             <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-slate-700">ملف التصريح الرقمي الكامل (.lic)</span>
-                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">مشفر وموقع رقمياً</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
+                  <FileText size={14} className="text-emerald-600" />
+                  <span>شهادة التفعيل النصية (.txt)</span>
+                </span>
+                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded whitespace-nowrap">متوافق مع APS</span>
               </div>
-              <div className="text-xs text-slate-500 font-medium leading-relaxed">
-                يحتوي هذا الملف على جميع الاستحقاقات وحدود الأجهزة والشبكة، مع توقيع إلكتروني لا يمكن تزويره.
+              <div className="text-xs text-slate-600 font-medium leading-relaxed">
+                شهادة نصية جاهزة للإرسال للعميل تتضمن كود التفعيل المعتمد (V2)، اسم المنشأة، الخطة، عدد الأجهزة المصرح بها، وتاريخ الانتهاء.
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={handleDownloadLicenseFile}
+                  onClick={handleDownloadCertificate}
                   className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-sm"
                 >
-                  <Download size={14} /> تنزيل ملف الترخيص (APS-LICENSE.lic)
+                  <Download size={14} /> تنزيل شهادة التفعيل (.txt)
                 </button>
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(generatedResult.signedToken)
-                    setCopiedToken(true)
-                    setTimeout(() => setCopiedToken(false), 2000)
+                    navigator.clipboard.writeText(generatedResult.certificateText)
+                    setCopiedCert(true)
+                    setTimeout(() => setCopiedCert(false), 2000)
                   }}
                   className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-bold transition flex items-center justify-center"
-                  title="نسخ الرمز الرقمي الكامل"
+                  title="نسخ نص الشهادة الكامل"
                 >
-                  {copiedToken ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                  {copiedCert ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
                 </button>
               </div>
             </div>

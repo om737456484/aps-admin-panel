@@ -319,7 +319,16 @@ export default function DevicesView() {
                         {lastSeen.toLocaleDateString('ar-EG')} {lastSeen.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
                       </div>
                       <div className="text-[10px] text-slate-500 mt-0.5">
-                        {isOnline ? 'متصل الآن' : `منذ ${Math.round(diffMs / 60000)} دقيقة`}
+                        {isOnline
+                          ? 'متصل الآن'
+                          : (() => {
+                              const mins = Math.max(1, Math.round(diffMs / 60000))
+                              if (mins < 60) return `منذ ${mins} دقيقة`
+                              const hours = Math.round(mins / 60)
+                              if (hours < 24) return `منذ ${hours} ساعة`
+                              const days = Math.round(hours / 24)
+                              return `منذ ${days} يوم`
+                            })()}
                       </div>
                     </td>
 
@@ -358,7 +367,7 @@ export default function DevicesView() {
                           <>
                             <button
                               onClick={() => handleApprove(dev)}
-                              className="px-3.5 py-1.5 rounded-xl text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all flex items-center gap-1.5"
+                              className="px-3.5 py-1.5 rounded-xl text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
                             >
                               <CheckCircle size={13} />
                               <span>اعتماد الجهاز</span>
@@ -366,7 +375,7 @@ export default function DevicesView() {
 
                             <button
                               onClick={() => handleReject(dev)}
-                              className="px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 transition-colors"
+                              className="px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 transition-colors whitespace-nowrap"
                               title="رفض طلب الجهاز"
                             >
                               رفض
@@ -375,7 +384,7 @@ export default function DevicesView() {
                         ) : (
                           <button
                             onClick={() => handleToggleStatus(dev)}
-                            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all border ${
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all border whitespace-nowrap ${
                               dev.status === 'active'
                                 ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
                                 : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'

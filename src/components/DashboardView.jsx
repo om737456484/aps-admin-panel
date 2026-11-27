@@ -7,7 +7,7 @@ import {
 import { apiFetchStats, apiFetchDevices, apiUpdateDeviceStatus, apiApproveDevice, apiRejectDevice } from '../services/supabaseClient'
 import { useToast } from '../context/ToastContext'
 
-export default function DashboardView({ onNavigate }) {
+export default function DashboardView({ onNavigate, isConnected = false }) {
   const [stats, setStats] = useState(null)
   const [recentDevices, setRecentDevices] = useState([])
   const [loading, setLoading] = useState(true)
@@ -106,6 +106,7 @@ export default function DashboardView({ onNavigate }) {
   }
 
   const pendingDevicesList = recentDevices.filter(d => d.status === 'pending')
+  const liveConnected = stats ? stats.isLive : isConnected
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -314,12 +315,12 @@ export default function DashboardView({ onNavigate }) {
             </div>
           </div>
           <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-xl font-black text-emerald-700 tracking-tight">
-              {stats?.isLive ? 'Supabase متصل' : 'وضع المعاينة'}
+            <span className={`text-xl font-black tracking-tight ${liveConnected ? 'text-emerald-700' : 'text-amber-700'}`}>
+              {liveConnected ? 'Supabase متصل' : 'وضع المعاينة'}
             </span>
           </div>
           <div className="mt-3 pt-3 border-t border-slate-100 text-[11px] text-slate-500">
-            {stats?.isLive ? 'التزامن التلقائي ونبض التراخيص نشطان.' : 'اتصل بـ Supabase لمزامنة فعلية.'}
+            {liveConnected ? 'التزامن التلقائي ونبض التراخيص نشطان.' : 'اتصل بـ Supabase لمزامنة فعلية.'}
           </div>
         </div>
       </div>
@@ -416,13 +417,13 @@ export default function DashboardView({ onNavigate }) {
                             <div className="flex items-center justify-end gap-1.5">
                               <button
                                 onClick={() => handleApproveDevice(dev)}
-                                className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors shadow-sm"
+                                className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors shadow-sm whitespace-nowrap"
                               >
                                 اعتماد
                               </button>
                               <button
                                 onClick={() => handleRejectDevice(dev)}
-                                className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 transition-colors"
+                                className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 transition-colors whitespace-nowrap"
                               >
                                 رفض
                               </button>
@@ -430,7 +431,7 @@ export default function DashboardView({ onNavigate }) {
                           ) : (
                             <button
                               onClick={() => handleToggleDeviceStatus(dev)}
-                              className={`px-3 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                              className={`px-3 py-1 rounded-lg text-xs font-bold border transition-colors whitespace-nowrap ${
                                 dev.status === 'active'
                                   ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
                                   : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'

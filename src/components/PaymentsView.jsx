@@ -37,6 +37,14 @@ export default function PaymentsView() {
 
         if (!error && data) {
           setPayments(data)
+        } else {
+          const fallback = await sb
+            .from('license_payments')
+            .select('*')
+            .order('created_at', { ascending: false })
+          if (!fallback.error && fallback.data) {
+            setPayments(fallback.data)
+          }
         }
       } catch (_) {}
     }
@@ -66,8 +74,21 @@ export default function PaymentsView() {
     setIsAddModalOpen(false)
   }
 
+  const filteredPayments = payments.filter((p) => {
+    const q = searchTerm.trim().toLowerCase()
+    if (!q) return true
+    return (
+      String(p.receipt_number || '').toLowerCase().includes(q) ||
+      String(p.reference_number || '').toLowerCase().includes(q) ||
+      String(p.payment_method || '').toLowerCase().includes(q) ||
+      String(p.registered_by || '').toLowerCase().includes(q) ||
+      String(p.notes || '').toLowerCase().includes(q) ||
+      String(p.organizations?.name_ar || '').toLowerCase().includes(q)
+    )
+  })
+
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 select-none">
+    <div className="w-full space-y-6 select-none animate-fadeIn">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -119,14 +140,20 @@ export default function PaymentsView() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {payments.length === 0 ? (
+              {loading ? (
                 <tr>
                   <td colSpan={7} className="p-8 text-center text-slate-400 font-medium">
-                    لا توجد سندات دفع مسجلة حالياً
+                    جاري تحميل سندات الدفع...
+                  </td>
+                </tr>
+              ) : filteredPayments.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-8 text-center text-slate-400 font-medium">
+                    {searchTerm.trim() ? 'لا توجد سندات دفع مطابقة للبحث' : 'لا توجد سندات دفع مسجلة حالياً'}
                   </td>
                 </tr>
               ) : (
-                payments.map((p) => (
+                filteredPayments.map((p) => (
                   <tr key={p.id} className="hover:bg-slate-50/80 transition">
                     <td className="p-4 font-bold font-mono text-slate-900">{p.receipt_number}</td>
                     <td className="p-4 font-black text-emerald-600">

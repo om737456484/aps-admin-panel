@@ -42,6 +42,7 @@ export default function SubscribersView({ initialOpenAdd = false }) {
   const [planModalSub, setPlanModalSub] = useState(null)
   const [selectedPlanId, setSelectedPlanId] = useState('pro')
   const [customMaxDevices, setCustomMaxDevices] = useState('')
+  const [customOfflineGraceDays, setCustomOfflineGraceDays] = useState('')
   const [updatingPlan, setUpdatingPlan] = useState(false)
 
   // Edit Subscriber Info Modal State
@@ -64,10 +65,22 @@ export default function SubscribersView({ initialOpenAdd = false }) {
     plan_id: 'pro',
     duration_days: 365,
     max_devices_override: '',
+    offline_grace_days_override: '',
     notes: '',
     subscriber_code: randomSubCode(),
   })
   const [saving, setSaving] = useState(false)
+
+  const getPlanDefaultOfflineGrace = (planId, subPlanObj = null) => {
+    const fromSub = Number(subPlanObj?.offline_grace_days)
+    if (Number.isFinite(fromSub) && fromSub >= 1) return fromSub
+    const found = plans.find((p) => p.id === planId)
+    const fromList = Number(found?.offline_grace_days)
+    if (Number.isFinite(fromList) && fromList >= 1) return fromList
+    return 30
+  }
+
+  const formatOfflineGraceDays = (days) => (Number(days) >= 36500 ? 'مفتوح' : `${days} يوم`)
 
   const loadData = async (isManual = false) => {
     setLoading(true)
@@ -116,7 +129,7 @@ export default function SubscribersView({ initialOpenAdd = false }) {
       `📅 تاريخ الانتهاء: ${expDate}\n\n` +
       `يرجى إدخال كود المشترك في شاشة التفعيل لربط النظام السحابي فورياً.`
     )
-    window.open(`https://wa.me/${cleanPhone}?text=${message}`, '_blank')
+    window.open(`https://wa.me/${cleanPhone}?text=${message}`, '_blank', 'noopener,noreferrer')
   }
 
   const handleCreate = async (e) => {
@@ -134,6 +147,7 @@ export default function SubscribersView({ initialOpenAdd = false }) {
         plan_id: 'pro',
         duration_days: 365,
         max_devices_override: '',
+        offline_grace_days_override: '',
         notes: '',
         subscriber_code: randomSubCode(),
       })
@@ -232,8 +246,9 @@ export default function SubscribersView({ initialOpenAdd = false }) {
     if (!planModalSub) return
     setUpdatingPlan(true)
     try {
-      await apiUpdateSubscriberPlan(planModalSub.id, selectedPlanId, customMaxDevices)
-      showToast('تم تحديث الخطة وعدد الأجهزة بنجاح', 'success')
+      const graceArg = customOfflineGraceDays === '' ? null : Number(customOfflineGraceDays)
+      await apiUpdateSubscriberPlan(planModalSub.id, selectedPlanId, customMaxDevices, graceArg)
+      showToast('تم تحديث الخطة وعدد الأجهزة وفترة الأوفلاين بنجاح', 'success')
       setPlanModalSub(null)
       await loadData()
     } catch (err) {
@@ -397,6 +412,14 @@ export default function SubscribersView({ initialOpenAdd = false }) {
                 const isCopied = copiedId === sub.id
                 const activeDevices = (sub.license_devices || []).filter(d => d.status === 'active').length
                 const maxDevices = sub.max_devices_override || sub.license_plans?.max_devices || 1
+                const planDefaultGrace = getPlanDefaultOfflineGrace(sub.plan_id, sub.license_plans)
+                const hasCustomGrace =
+                  sub.offline_grace_days_override !== null &&
+                  sub.offline_grace_days_override !== undefined &&
+                  sub.offline_grace_days_override !== ''
+                const effectiveGrace = hasCustomGrace
+                  ? Number(sub.offline_grace_days_override)
+                  : (Number(sub.effective_offline_grace_days) || planDefaultGrace)
                 const isExpanded = expandedSubId === sub.id
                 const usagePercent = Math.min(100, Math.round((activeDevices / maxDevices) * 100))
 
@@ -415,9 +438,14 @@ export default function SubscribersView({ initialOpenAdd = false }) {
                           </button>
                           <div>
                             <div className="font-bold text-slate-900 text-sm">{sub.company_name}</div>
-                            <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                            <div className="text-[11px] text-slate-500 flex items-center flex-wrap gap-x-2 gap-y-0.5 mt-0.5">
                               <span>{sub.owner_name || 'بدون اسم مسؤول'}</span>
-                              {sub.phone && <span className="text-slate-400 font-mono">| {sub.phone}</span>}
+                              {sub.phone && (
+                                <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-400 font-mono">
+                                  <span>|</span>
+                                  <span dir="ltr">{sub.phone}</span>
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -425,8 +453,8 @@ export default function SubscribersView({ initialOpenAdd = false }) {
 
                       {/* Subscriber Code & Copy */}
                       <td className="py-4 px-3">
-                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 font-mono text-blue-700 font-bold">
-                          <span>{sub.subscriber_code}</span>
+                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 font-mono text-blue-700 font-bold whitespace-nowrap">
+                          <span dir="ltr">{sub.subscriber_code}</span>
                           <button
                             type="button"
                             onClick={() => handleCopyCode(sub.subscriber_code, sub.id)}
@@ -449,9 +477,10 @@ export default function SubscribersView({ initialOpenAdd = false }) {
                               setPlanModalSub(sub)
                               setSelectedPlanId(sub.plan_id || 'pro')
                               setCustomMaxDevices(sub.max_devices_override || '')
+                              setCustomOfflineGraceDays(sub.offline_grace_days_override ?? '')
                             }}
                             className="text-slate-400 hover:text-blue-600 p-1 rounded-md hover:bg-slate-100"
-                            title="تعديل الخطة وعدد الأجهزة"
+                            title="تعديل الخطة وعدد الأجهزة وفترة الأوفلاين"
                           >
                             <Sliders size={13} />
                           </button>
@@ -470,6 +499,20 @@ export default function SubscribersView({ initialOpenAdd = false }) {
                               style={{ width: `${usagePercent}%` }}
                             />
                           </div>
+                        </div>
+                        {/* Effective Offline Grace Badge */}
+                        <div className="mt-1.5">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border whitespace-nowrap ${
+                              hasCustomGrace
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-slate-50 text-slate-600 border-slate-200'
+                            }`}
+                            title={hasCustomGrace ? 'فترة عمل أوفلاين مخصصة لهذا المشترك' : 'موروثة من إعدادات الباقة'}
+                          >
+                            <Shield size={10} />
+                            <span>{formatOfflineGraceDays(effectiveGrace)} ({hasCustomGrace ? 'مخصص' : 'الباقة'})</span>
+                          </span>
                         </div>
                       </td>
 
@@ -711,7 +754,7 @@ export default function SubscribersView({ initialOpenAdd = false }) {
                   <label className="block font-semibold text-slate-700 mb-1.5">رقم الهاتف (واتساب)</label>
                   <input
                     type="text"
-                    placeholder="مثال: 779967074"
+                    placeholder="مثال: 770000000"
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-900 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 font-mono"
@@ -775,6 +818,62 @@ export default function SubscribersView({ initialOpenAdd = false }) {
                     </button>
                   </div>
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1.5">
+                  فترة الأوفلاين المخصصة (اختياري)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    max="36500"
+                    placeholder={`افتراضي الباقة (${formatOfflineGraceDays(getPlanDefaultOfflineGrace(formData.plan_id))})`}
+                    value={formData.offline_grace_days_override}
+                    onChange={(e) => setFormData({ ...formData, offline_grace_days_override: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-900 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 font-mono"
+                  />
+                  {formData.offline_grace_days_override !== '' && (
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, offline_grace_days_override: '' })}
+                      className="px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold whitespace-nowrap border border-slate-200"
+                    >
+                      افتراضي الباقة
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {[7, 14, 30, 60, 90].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, offline_grace_days_override: String(d) })}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                        Number(formData.offline_grace_days_override) === d
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {d} يوم
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, offline_grace_days_override: '36500' })}
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                      Number(formData.offline_grace_days_override) >= 36500
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                    }`}
+                  >
+                    دائم (36500)
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  اتركه فارغاً ليرث المشترك افتراضي الباقة ({formatOfflineGraceDays(getPlanDefaultOfflineGrace(formData.plan_id))}) تلقائياً.
+                </p>
               </div>
 
               <div>
@@ -1041,6 +1140,62 @@ export default function SubscribersView({ initialOpenAdd = false }) {
                   onChange={(e) => setCustomMaxDevices(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-900 font-mono outline-none focus:border-blue-600"
                 />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <label className="block font-semibold text-slate-700">
+                    فترة الأوفلاين المخصصة (أيام):
+                  </label>
+                  {customOfflineGraceDays !== '' && (
+                    <button
+                      type="button"
+                      onClick={() => setCustomOfflineGraceDays('')}
+                      className="text-[11px] font-bold text-blue-600 hover:text-blue-800 hover:underline"
+                    >
+                      استخدام افتراضي الباقة
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="number"
+                  min="1"
+                  max="36500"
+                  placeholder={`افتراضي الباقة (${formatOfflineGraceDays(getPlanDefaultOfflineGrace(selectedPlanId))})`}
+                  value={customOfflineGraceDays}
+                  onChange={(e) => setCustomOfflineGraceDays(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-900 font-mono outline-none focus:border-blue-600"
+                />
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[7, 14, 30, 60, 90].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setCustomOfflineGraceDays(String(d))}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                        Number(customOfflineGraceDays) === d
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {d} يوم
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setCustomOfflineGraceDays('36500')}
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                      Number(customOfflineGraceDays) >= 36500
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                    }`}
+                  >
+                    دائم (36500)
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  تُرك فارغاً = يرث افتراضي الباقة ({formatOfflineGraceDays(getPlanDefaultOfflineGrace(selectedPlanId))})
+                </p>
               </div>
 
               <div className="pt-3 flex items-center justify-end gap-2.5 border-t border-slate-100">

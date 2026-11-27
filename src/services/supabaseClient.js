@@ -41,29 +41,48 @@ export async function apiLogin(email, password) {
   const cleanEmail = (email || '').trim()
   const cleanPass = (password || '').trim()
 
-  // 1. Check Master Admin Credentials
-  if (cleanEmail === '779967074737456484' && cleanPass === '779967074737456484') {
-    const masterSession = { user: { email: '779967074737456484', role: 'admin' } }
-    localStorage.setItem('aps_admin_demo_session', 'true')
-    return { success: true, session: masterSession, user: masterSession.user }
+  if (!cleanEmail || !cleanPass) {
+    return { success: false, error: 'البريد الإلكتروني وكلمة المرور مطلوبان' }
   }
 
-  // 2. Try Supabase Auth
   const sb = getSupabase()
-  if (sb) {
-    try {
-      const { data, error } = await sb.auth.signInWithPassword({ email: cleanEmail.toLowerCase(), password: cleanPass })
-      if (!error && data?.session) {
-        localStorage.removeItem('aps_admin_demo_session')
-        return { success: true, session: data.session, user: data.user }
-      }
-      return { success: false, error: error?.message || 'بيانات الدخول غير صحيحة' }
-    } catch (err) {
-      return { success: false, error: err.message }
-    }
+  if (!sb) {
+    return { success: false, error: 'لم يتم إعداد اتصال Supabase' }
   }
 
-  return { success: false, error: 'بيانات الدخول غير صحيحة' }
+  try {
+    const { data, error } = await sb.auth.signInWithPassword({ email: cleanEmail.toLowerCase(), password: cleanPass })
+    if (error || !data?.session) {
+      const msg = String(error?.message || '').toLowerCase()
+      let arMsg = error?.message || 'بيانات الدخول غير صحيحة'
+      if (msg.includes('invalid login credentials')) {
+        arMsg = 'البريد الإلكتروني أو كلمة المرور غير صحيحة'
+      } else if (msg.includes('email not confirmed')) {
+        arMsg = 'لم يتم تأكيد البريد الإلكتروني بعد'
+      } else if (msg.includes('too many requests') || msg.includes('rate limit')) {
+        arMsg = 'محاولات تسجيل دخول كثيرة، يرجى الانتظار قليلاً ثم المحاولة مرة أخرى'
+      } else if (msg.includes('failed to fetch') || msg.includes('network')) {
+        arMsg = 'تعذر الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت'
+      }
+      return { success: false, error: arMsg }
+    }
+    const { data: profile, error: profErr } = await sb
+      .from('admin_profiles')
+      .select('id, email, name, role_id, is_active')
+      .eq('id', data.user.id)
+      .maybeSingle()
+    if (!profErr && profile && !profile.is_active) {
+      await sb.auth.signOut()
+      return { success: false, error: 'حساب المدير معطّل' }
+    }
+    return { success: true, session: data.session, user: data.user, profile: profile || null }
+  } catch (err) {
+    const msg = String(err?.message || '').toLowerCase()
+    if (msg.includes('failed to fetch') || msg.includes('network')) {
+      return { success: false, error: 'تعذر الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت' }
+    }
+    return { success: false, error: err.message }
+  }
 }
 
 export async function apiLogout() {
@@ -85,16 +104,15 @@ export async function apiGetCurrentSession() {
       if (data?.session) return data.session
     } catch (_) {}
   }
-  if (localStorage.getItem('aps_admin_demo_session') === 'true') {
-    return { user: { email: '779967074737456484', role: 'admin' } }
-  }
   return null
 }
 
-const DEFAULT_AUTH_SECRET = 'APS-AUTH-KEY-2026-c7e9f1a2b3d4e5f67890abcdef123456'
-
-export async function generateOfflineCodeBrowser({ requestCode, daysGranted = 365, maxDevices = 1, secret = DEFAULT_AUTH_SECRET }) {
-  const cleanReq = String(requestCode || '').trim().replace(/\s+/g, '').toUpperCase()
+export async function generateOfflineCodeBrowser({ requestCode, daysGranted = 365, maxDevices = 1, secret }) {
+  const resolvedSecret = String(secret || import.meta.env.VITE_LICENSE_AUTHORITY_SECRET || '').trim()
+  if (!resolvedSecret) {
+    throw new Error('مفتاح توقيع التفعيل غير مضبوط (يجب تمريره بشكل صريح أو عبر متغير البيئة)')
+  }
+  const cleanReq = String(requestCode || '').trim().replace(/[\s-]+/g, '').toUpperCase()
   const enc = new TextEncoder()
   const reqHashBuf = await crypto.subtle.digest('SHA-256', enc.encode(cleanReq))
   const reqHashHex = Array.from(new Uint8Array(reqHashBuf)).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase()
@@ -104,7 +122,7 @@ export async function generateOfflineCodeBrowser({ requestCode, daysGranted = 36
 
   const key = await crypto.subtle.importKey(
     'raw',
-    enc.encode(secret),
+    enc.encode(resolvedSecret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign']
@@ -183,7 +201,7 @@ export async function testConnection(url, key) {
   }
 }
 
-async function safeAuditLog(sb, payload) {
+export async function safeAuditLog(sb, payload) {
   if (!sb) return
   try {
     const { error } = await sb.from('license_audit_logs').insert(payload)
@@ -195,16 +213,56 @@ async function safeAuditLog(sb, payload) {
   }
 }
 
+// ── Offline Grace Validation Helpers ──
+const MIN_OFFLINE_GRACE_DAYS = 1
+const MAX_OFFLINE_GRACE_DAYS = 36500
+const MIGRATION_NOTICE_AR =
+  'حقل فترة العمل بدون إنترنت غير مفعّل في قاعدة بيانات Supabase بعد. يرجى تطبيق ملف الترحيل 20261127000000_custom_offline_grace_days.sql أولاً.'
+
+function normalizeRequiredOfflineGraceDays(val) {
+  if (val === null || val === undefined || val === '' || typeof val === 'boolean') {
+    throw new Error('فترة العمل بدون إنترنت مطلوبة ويجب أن تكون عدداً صحيحاً بين 1 و 36500 يوم')
+  }
+  const num = Number(val)
+  if (!Number.isFinite(num) || !Number.isInteger(num) || num < MIN_OFFLINE_GRACE_DAYS || num > MAX_OFFLINE_GRACE_DAYS) {
+    throw new Error('فترة العمل بدون إنترنت يجب أن تكون عدداً صحيحاً بين 1 و 36500 يوم')
+  }
+  return num
+}
+
+function normalizeOptionalOfflineGraceDays(val) {
+  if (val === null || val === undefined || val === '') return null
+  if (typeof val === 'boolean') {
+    throw new Error('فترة الأوفلاين المخصصة يجب أن تكون عدداً صحيحاً بين 1 و 36500 يوم أو تُترك فارغة')
+  }
+  const num = Number(val)
+  if (!Number.isFinite(num) || !Number.isInteger(num) || num < MIN_OFFLINE_GRACE_DAYS || num > MAX_OFFLINE_GRACE_DAYS) {
+    throw new Error('فترة الأوفلاين المخصصة يجب أن تكون عدداً صحيحاً بين 1 و 36500 يوم أو تُترك فارغة لوراثة افتراضي الباقة')
+  }
+  return num
+}
+
+function isMissingOfflineGraceColumnError(err) {
+  if (!err) return false
+  const code = String(err.code || '')
+  const msg = `${err.message || ''} ${err.details || ''} ${err.hint || ''}`
+  return (
+    (code === 'PGRST204' || code === '42703' || /column|schema cache/i.test(msg)) &&
+    /offline_grace_days/i.test(msg)
+  )
+}
+
 // ── Fallback Demo Data ──
 const MOCK_PLANS = [
-  { id: 'trial', name_ar: 'نسخة تجريبية', name_en: 'Trial', duration_days: 14, max_devices: 1, price: 0, billing_cycle: 'trial', features: ['sales', 'inventory', 'pos'] },
-  { id: 'basic', name_ar: 'الخطة الأساسية', name_en: 'Basic', duration_days: 365, max_devices: 1, price: 150, billing_cycle: 'yearly', features: ['sales', 'purchases', 'inventory', 'pos'] },
-  { id: 'pro', name_ar: 'الخطة الاحترافية', name_en: 'Professional', duration_days: 365, max_devices: 3, price: 300, billing_cycle: 'yearly', features: ['sales', 'purchases', 'inventory', 'accounts', 'pos', 'hrms', 'cloud_backup'] },
-  { id: 'enterprise', name_ar: 'خطة الشركات', name_en: 'Enterprise', duration_days: 365, max_devices: 10, price: 600, billing_cycle: 'yearly', features: ['sales', 'purchases', 'inventory', 'accounts', 'pos', 'hrms', 'payroll', 'cloud_backup', 'multi_branch'] },
+  { id: 'trial', name_ar: 'نسخة تجريبية', name_en: 'Trial', duration_days: 14, max_devices: 1, offline_grace_days: 7, price: 0, billing_cycle: 'trial', features: ['sales', 'inventory', 'pos'] },
+  { id: 'starter', name_ar: 'الباقة الفردية', name_en: 'Starter', duration_days: 365, max_devices: 1, offline_grace_days: 14, price: 120, billing_cycle: 'yearly', features: ['sales', 'purchases', 'inventory', 'pos'] },
+  { id: 'pro', name_ar: 'الخطة الاحترافية', name_en: 'Professional', duration_days: 365, max_devices: 3, offline_grace_days: 30, price: 300, billing_cycle: 'yearly', features: ['sales', 'purchases', 'inventory', 'accounts', 'treasury', 'reports', 'pos', 'cloud_backup'] },
+  { id: 'enterprise', name_ar: 'خطة الشركات', name_en: 'Enterprise', duration_days: 365, max_devices: 10, offline_grace_days: 60, price: 600, billing_cycle: 'yearly', features: ['sales', 'purchases', 'inventory', 'accounts', 'treasury', 'reports', 'parties', 'pos', 'cloud_backup', 'multi_branch'] },
+  { id: 'lifetime', name_ar: 'الترخيص الدائم', name_en: 'Lifetime', duration_days: 36500, max_devices: 5, offline_grace_days: 36500, price: 800, billing_cycle: 'lifetime', features: ['sales', 'purchases', 'inventory', 'accounts', 'treasury', 'reports', 'parties', 'pos', 'cloud_backup'] },
 ]
 
 let _mockSubscribers = [
-  { id: 'sub-1', subscriber_code: 'APS-SUB-61135', company_name: 'المتحدون', owner_name: 'عمر هادي', phone: '779967074', plan_id: 'enterprise', status: 'active', expires_at: new Date(Date.now() + 45 * 86400000).toISOString(), max_devices_override: 10, notes: 'عميل رئيسي', created_at: new Date().toISOString() },
+  { id: 'sub-1', subscriber_code: 'APS-SUB-00000', company_name: 'شركة تجريبية', owner_name: 'مستخدم تجريبي', phone: '000000000', plan_id: 'enterprise', status: 'active', expires_at: new Date(Date.now() + 45 * 86400000).toISOString(), max_devices_override: 10, offline_grace_days_override: null, notes: 'بيانات معاينة تجريبية', created_at: new Date().toISOString() },
 ]
 
 let _mockDevices = [
@@ -226,24 +284,39 @@ export async function apiFetchStats() {
         sb.from('license_subscribers').select('id, status, expires_at, plan_id, max_devices_override'),
         sb.from('license_devices').select('id, status, last_heartbeat_at'),
       ])
-      const subs = subRes.data || []
-      const devs = devRes.data || []
-      const now = new Date()
-      const in7Days = new Date(now.getTime() + 7 * 86400000)
+      if (!subRes.error && !devRes.error) {
+        const subs = subRes.data || []
+        const devs = devRes.data || []
+        const now = new Date()
+        const in7Days = new Date(now.getTime() + 7 * 86400000)
 
-      return {
-        totalSubscribers: subs.length,
-        activeSubscribers: subs.filter(s => s.status === 'active' || s.status === 'trial').length,
-        suspendedSubscribers: subs.filter(s => s.status === 'suspended').length,
-        expiringSoon: subs.filter(s => new Date(s.expires_at) > now && new Date(s.expires_at) <= in7Days).length,
-        totalDevices: devs.length,
-        activeDevices: devs.filter(d => d.status === 'active').length,
-        pendingDevices: devs.filter(d => d.status === 'pending').length,
-        onlineDevices: devs.filter(d => d.status === 'active' && (now - new Date(d.last_heartbeat_at)) < 300000).length,
-        isLive: true,
+        return {
+          totalSubscribers: subs.length,
+          activeSubscribers: subs.filter(s => s.status === 'active' || s.status === 'trial').length,
+          suspendedSubscribers: subs.filter(s => s.status === 'suspended').length,
+          expiringSoon: subs.filter(s => new Date(s.expires_at) > now && new Date(s.expires_at) <= in7Days).length,
+          totalDevices: devs.length,
+          activeDevices: devs.filter(d => d.status === 'active').length,
+          pendingDevices: devs.filter(d => d.status === 'pending').length,
+          onlineDevices: devs.filter(d => d.status === 'active' && (now - new Date(d.last_heartbeat_at)) < 300000).length,
+          isLive: true,
+        }
       }
+      console.warn('[Stats] Live query returned error:', subRes.error?.message || devRes.error?.message)
     } catch (e) {
       console.warn('[Stats] Live query error:', e)
+    }
+    return {
+      totalSubscribers: 0,
+      activeSubscribers: 0,
+      suspendedSubscribers: 0,
+      expiringSoon: 0,
+      totalDevices: 0,
+      activeDevices: 0,
+      pendingDevices: 0,
+      onlineDevices: 0,
+      isLive: true,
+      queryError: true,
     }
   }
 
@@ -276,30 +349,59 @@ export async function apiFetchSubscribers() {
     }
   }
   return {
-    data: _mockSubscribers.map(sub => ({
-      ...sub,
-      license_devices: _mockDevices.filter(d => d.subscriber_id === sub.id),
-      license_plans: MOCK_PLANS.find(p => p.id === sub.plan_id),
-    })),
+    data: _mockSubscribers.map(sub => {
+      const plan = MOCK_PLANS.find(p => p.id === sub.plan_id)
+      return {
+        ...sub,
+        effective_offline_grace_days: sub.offline_grace_days_override ?? plan?.offline_grace_days ?? 30,
+        license_devices: _mockDevices.filter(d => d.subscriber_id === sub.id),
+        license_plans: plan,
+      }
+    }),
     isLive: false
   }
 }
 
 export async function apiCreateSubscriber(payload) {
   const sb = getSupabase()
+  const normalizedGrace = normalizeOptionalOfflineGraceDays(payload?.offline_grace_days_override)
+  const insertPayload = { ...payload }
+  if (normalizedGrace === null) {
+    delete insertPayload.offline_grace_days_override
+  } else {
+    insertPayload.offline_grace_days_override = normalizedGrace
+  }
+
   if (sb) {
-    const { data, error } = await sb.from('license_subscribers').insert(payload).select().single()
+    let { data, error } = await sb.from('license_subscribers').insert(insertPayload).select().single()
+    if (error && isMissingOfflineGraceColumnError(error)) {
+      if (normalizedGrace === null) {
+        const fallbackPayload = { ...insertPayload }
+        delete fallbackPayload.offline_grace_days_override
+        const retry = await sb.from('license_subscribers').insert(fallbackPayload).select().single()
+        data = retry.data
+        error = retry.error
+      } else {
+        throw new Error(MIGRATION_NOTICE_AR)
+      }
+    }
     if (error) throw error
     await safeAuditLog(sb, {
       subscriber_id: data.id,
       event_type: 'subscriber_created',
-      details: { plan_id: data.plan_id, company_name: data.company_name, code: data.subscriber_code },
+      details: {
+        plan_id: data.plan_id,
+        company_name: data.company_name,
+        code: data.subscriber_code,
+        offline_grace_days_override: normalizedGrace,
+      },
     })
     return data
   }
   const newSub = {
     id: 'sub-' + Date.now(),
-    ...payload,
+    ...insertPayload,
+    offline_grace_days_override: normalizedGrace,
     created_at: new Date().toISOString(),
   }
   _mockSubscribers.unshift(newSub)
@@ -307,7 +409,11 @@ export async function apiCreateSubscriber(payload) {
     id: 'log-' + Date.now(),
     subscriber_id: newSub.id,
     event_type: 'subscriber_created',
-    details: { plan_id: newSub.plan_id, company_name: newSub.company_name },
+    details: {
+      plan_id: newSub.plan_id,
+      company_name: newSub.company_name,
+      offline_grace_days_override: normalizedGrace,
+    },
     created_at: new Date().toISOString()
   })
   return newSub
@@ -443,24 +549,49 @@ export async function apiSetSubscriberExpiryDate(id, targetDateIso) {
   return sub
 }
 
-export async function apiUpdateSubscriberPlan(id, planId, maxDevicesOverride) {
+export async function apiUpdateSubscriberPlan(id, planId, maxDevicesOverride, offlineGraceDaysOverride = undefined) {
   const sb = getSupabase()
+  const hasGraceArg = offlineGraceDaysOverride !== undefined
+  const normalizedGrace = hasGraceArg ? normalizeOptionalOfflineGraceDays(offlineGraceDaysOverride) : undefined
+  const basePayload = {
+    plan_id: planId,
+    max_devices_override: maxDevicesOverride ? Number(maxDevicesOverride) : null,
+    updated_at: new Date().toISOString(),
+  }
+  const updatePayload = hasGraceArg
+    ? { ...basePayload, offline_grace_days_override: normalizedGrace }
+    : basePayload
+
   if (sb) {
-    const { data, error } = await sb
+    let { data, error } = await sb
       .from('license_subscribers')
-      .update({
-        plan_id: planId,
-        max_devices_override: maxDevicesOverride ? Number(maxDevicesOverride) : null,
-        updated_at: new Date().toISOString()
-      })
+      .update(updatePayload)
       .eq('id', id)
       .select()
       .single()
+    if (error && hasGraceArg && isMissingOfflineGraceColumnError(error)) {
+      if (normalizedGrace === null) {
+        const retry = await sb
+          .from('license_subscribers')
+          .update(basePayload)
+          .eq('id', id)
+          .select()
+          .single()
+        data = retry.data
+        error = retry.error
+      } else {
+        throw new Error(MIGRATION_NOTICE_AR)
+      }
+    }
     if (error) throw error
     await safeAuditLog(sb, {
       subscriber_id: id,
       event_type: 'subscriber_plan_updated',
-      details: { plan_id: planId, max_devices_override: maxDevicesOverride },
+      details: {
+        plan_id: planId,
+        max_devices_override: maxDevicesOverride ? Number(maxDevicesOverride) : null,
+        ...(hasGraceArg ? { offline_grace_days_override: normalizedGrace } : {}),
+      },
     })
     return data
   }
@@ -468,6 +599,9 @@ export async function apiUpdateSubscriberPlan(id, planId, maxDevicesOverride) {
   if (sub) {
     sub.plan_id = planId
     sub.max_devices_override = maxDevicesOverride ? Number(maxDevicesOverride) : null
+    if (hasGraceArg) {
+      sub.offline_grace_days_override = normalizedGrace
+    }
   }
   return sub
 }
@@ -651,18 +785,37 @@ export async function apiFetchPlans() {
 
 export async function apiUpdatePlan(id, updates) {
   const sb = getSupabase()
+  const cleanUpdates = { ...updates }
+  if (cleanUpdates.offline_grace_days !== undefined) {
+    cleanUpdates.offline_grace_days = normalizeRequiredOfflineGraceDays(cleanUpdates.offline_grace_days)
+  }
   if (sb) {
     const { data, error } = await sb
       .from('license_plans')
-      .update({ ...updates, updated_at: new Date().toISOString() })
+      .update({ ...cleanUpdates, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single()
-    if (error) throw error
+    if (error) {
+      if (isMissingOfflineGraceColumnError(error)) {
+        throw new Error(MIGRATION_NOTICE_AR)
+      }
+      throw error
+    }
+    await safeAuditLog(sb, {
+      event_type: 'plan_updated',
+      details: {
+        plan_id: id,
+        price: cleanUpdates.price,
+        max_devices: cleanUpdates.max_devices,
+        duration_days: cleanUpdates.duration_days,
+        offline_grace_days: cleanUpdates.offline_grace_days,
+      },
+    })
     return data
   }
   const p = MOCK_PLANS.find(x => x.id === id)
-  if (p) Object.assign(p, updates)
+  if (p) Object.assign(p, cleanUpdates)
   return p
 }
 
@@ -670,12 +823,21 @@ export async function apiFetchAuditLogs() {
   const sb = getSupabase()
   if (sb) {
     try {
-      const { data, error } = await sb
-        .from('license_audit_logs')
-        .select('*, license_subscribers(company_name, subscriber_code), license_devices(device_name)')
-        .order('created_at', { ascending: false })
-        .limit(100)
-      if (!error && data) return { data, isLive: true }
+      const [logsRes, subsRes, devsRes] = await Promise.all([
+        sb.from('license_audit_logs').select('*').order('created_at', { ascending: false }).limit(100),
+        sb.from('license_subscribers').select('id, company_name, subscriber_code'),
+        sb.from('license_devices').select('id, device_name'),
+      ])
+      if (!logsRes.error && logsRes.data) {
+        const subMap = new Map((subsRes.data || []).map(s => [s.id, s]))
+        const devMap = new Map((devsRes.data || []).map(d => [d.id, d]))
+        const hydrated = logsRes.data.map(row => ({
+          ...row,
+          license_subscribers: row.subscriber_id ? (subMap.get(row.subscriber_id) || null) : null,
+          license_devices: row.device_id ? (devMap.get(row.device_id) || null) : null,
+        }))
+        return { data: hydrated, isLive: true }
+      }
     } catch (e) {
       console.warn('[AuditLogs] Query error:', e)
     }

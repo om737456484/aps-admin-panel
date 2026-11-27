@@ -56,10 +56,21 @@ export default function App() {
   useEffect(() => {
     checkConnection()
     checkAuth()
+  }, [])
+
+  useEffect(() => {
+    if (!session) {
+      setPendingCount(0)
+      return undefined
+    }
     loadStats()
     const timer = setInterval(loadStats, 10000)
     return () => clearInterval(timer)
-  }, [])
+  }, [session])
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }, [activeTab])
 
   const handleLogout = async () => {
     await apiLogout()
@@ -108,7 +119,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex font-sans antialiased selection:bg-blue-600 selection:text-white" dir="rtl">
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex font-sans antialiased selection:bg-blue-600 selection:text-white overflow-x-hidden" dir="rtl">
       {/* Desktop Sidebar (RTL Right) */}
       <div className="hidden lg:block shrink-0">
         <Sidebar
@@ -187,7 +198,7 @@ export default function App() {
         />
 
         <main className="flex-1 p-6 sm:p-8 max-w-7xl w-full mx-auto">
-          {activeTab === 'dashboard' && <DashboardView onNavigate={handleNavigate} />}
+          {activeTab === 'dashboard' && <DashboardView onNavigate={handleNavigate} isConnected={isConnected} />}
           {activeTab === 'subscribers' && <SubscribersView initialOpenAdd={initialOpenAddSub} onOpenKeygen={() => setIsKeygenOpen(true)} />}
           {activeTab === 'offline-activation' && <OfflineActivationView />}
           {activeTab === 'devices' && <DevicesView />}

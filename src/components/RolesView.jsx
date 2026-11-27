@@ -10,41 +10,65 @@ export default function RolesView() {
       id: 'super_admin',
       name_ar: 'المدير العام (Super Admin)',
       desc: 'كامل الصلاحيات الإدارية والفنية وإدارة المفاتيح والتراخيص',
-      members: 1,
+      members: 0,
       badge: 'bg-rose-50 text-rose-700 border-rose-200'
     },
     {
       id: 'license_manager',
       name_ar: 'مدير التراخيص (License Manager)',
       desc: 'إدارة وتوليد وتجديد التراخيص واعتماد الأجهزة والتفعيل اليدوي',
-      members: 2,
+      members: 0,
       badge: 'bg-indigo-50 text-indigo-700 border-indigo-200'
     },
     {
       id: 'sales_manager',
       name_ar: 'مدير المبيعات (Sales Manager)',
       desc: 'إضافة العملاء والمنشآت وتسجيل طلبات الشراء والاشتراكات',
-      members: 3,
+      members: 0,
       badge: 'bg-blue-50 text-blue-700 border-blue-200'
     },
     {
       id: 'support_agent',
       name_ar: 'وكيل الدعم الفني (Support Agent)',
       desc: 'الاطلاع على التراخيص والأجهزة ومتابعة مشاكل التفعيل',
-      members: 4,
+      members: 0,
       badge: 'bg-amber-50 text-amber-700 border-amber-200'
     },
     {
       id: 'auditor',
       name_ar: 'مدقق النظام (System Auditor)',
       desc: 'مراجعة وتدقيق السجلات والعمليات الحساسة دون إمكانية التعديل',
-      members: 1,
+      members: 0,
       badge: 'bg-emerald-50 text-emerald-700 border-emerald-200'
     }
   ])
 
+  useEffect(() => {
+    let active = true
+    const loadRoleCounts = async () => {
+      const sb = getSupabase()
+      if (!sb) return
+      try {
+        const { data, error } = await sb
+          .from('admin_profiles')
+          .select('id, role_id, is_active')
+        if (!error && Array.isArray(data) && active) {
+          const counts = {}
+          for (const row of data) {
+            if (row.is_active === false) continue
+            const rid = row.role_id || 'super_admin'
+            counts[rid] = (counts[rid] || 0) + 1
+          }
+          setRoles((prev) => prev.map((r) => ({ ...r, members: counts[r.id] || 0 })))
+        }
+      } catch (_) {}
+    }
+    loadRoleCounts()
+    return () => { active = false }
+  }, [])
+
   return (
-    <div className="p-8 max-w-6xl mx-auto space-y-8 select-none">
+    <div className="w-full space-y-6 select-none animate-fadeIn">
       {/* Header */}
       <div>
         <div className="flex items-center gap-3 mb-1">

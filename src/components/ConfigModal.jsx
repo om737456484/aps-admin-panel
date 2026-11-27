@@ -98,7 +98,7 @@ export default function ConfigModal({ isOpen, onClose, onSaved }) {
 
           <div>
             <label className="block font-semibold text-slate-700 mb-1.5">
-              Anon / Service Role Key (مفتاح الـ API):
+              Anon Public Key (مفتاح Supabase العام):
             </label>
             <div className="relative">
               <input
@@ -121,6 +121,10 @@ export default function ConfigModal({ isOpen, onClose, onSaved }) {
                 {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
+            <p className="mt-1.5 text-[11px] text-amber-700 flex items-center gap-1 font-medium">
+              <ShieldAlert size={13} className="shrink-0" />
+              <span>استخدم مفتاح Anon العام فقط — لا تضع Service Role Key في المتصفح.</span>
+            </p>
           </div>
 
           {/* Test Connection Button & Result */}

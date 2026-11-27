@@ -1,13 +1,16 @@
 import React, { useState } from 'react'
-import { Key, Copy, Check, X, ShieldCheck, Sparkles, Send } from 'lucide-react'
+import { Key, Copy, Check, X, ShieldCheck, Sparkles, Eye, EyeOff, Lock } from 'lucide-react'
 import { generateOfflineCodeBrowser } from '../services/supabaseClient'
 import { useToast } from '../context/ToastContext'
 
 export default function OfflineKeygenModal({ isOpen, onClose }) {
+  const hasEnvSecret = Boolean(import.meta.env.VITE_LICENSE_AUTHORITY_SECRET)
   const [requestCode, setRequestCode] = useState('')
   const [days, setDays] = useState(365)
-  const [devices, setDevices] = useState(101)
+  const [devices, setDevices] = useState(3)
   const [companyName, setCompanyName] = useState('')
+  const [signingSecret, setSigningSecret] = useState('')
+  const [showSecret, setShowSecret] = useState(false)
   const [generatedCode, setGeneratedCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -21,6 +24,10 @@ export default function OfflineKeygenModal({ isOpen, onClose }) {
       showToast('يرجى إدخال كود الطلب الخاص بجهاز العميل', 'warning')
       return
     }
+    if (!hasEnvSecret && !signingSecret.trim()) {
+      showToast('يرجى إدخال مفتاح التوقيع الإداري (Signing Secret)', 'warning')
+      return
+    }
 
     setLoading(true)
     try {
@@ -28,6 +35,7 @@ export default function OfflineKeygenModal({ isOpen, onClose }) {
         requestCode: requestCode.trim(),
         daysGranted: Number(days) || 365,
         maxDevices: Number(devices) || 1,
+        secret: signingSecret.trim() || undefined,
       })
       setGeneratedCode(code)
       showToast('تم توليد كود التفعيل المعتمد بنجاح', 'success')
@@ -75,13 +83,42 @@ export default function OfflineKeygenModal({ isOpen, onClose }) {
             </label>
             <input
               type="text"
+              dir="ltr"
               required
               value={requestCode}
               onChange={(e) => setRequestCode(e.target.value.toUpperCase())}
-              placeholder="مثال: 7B199C1E48F02AA56E3BD8110"
-              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono tracking-wider focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
+              placeholder="00DTM-BKX52-8JS88-EIEXG-L8JCL"
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono tracking-wider text-left focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
             />
           </div>
+
+          {!hasEnvSecret && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                <Lock size={12} className="text-slate-500" />
+                <span>مفتاح التوقيع الإداري (Signing Secret) *</span>
+              </label>
+              <div className="relative">
+                <input
+                  type={showSecret ? 'text' : 'password'}
+                  dir="ltr"
+                  required
+                  value={signingSecret}
+                  onChange={(e) => setSigningSecret(e.target.value)}
+                  placeholder="أدخل مفتاح التوقيع المعتمد لنظام APS"
+                  className="w-full pl-9 pr-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-left focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSecret(!showSecret)}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  title={showSecret ? 'إخفاء المفتاح' : 'إظهار المفتاح'}
+                >
+                  {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -126,7 +163,7 @@ export default function OfflineKeygenModal({ isOpen, onClose }) {
                 className="flex-1 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-blue-600"
               />
               <div className="flex gap-1">
-                {[1, 5, 10, 101].map((val) => (
+                {[1, 3, 5, 10, 25].map((val) => (
                   <button
                     type="button"
                     key={val}
@@ -163,7 +200,10 @@ export default function OfflineKeygenModal({ isOpen, onClose }) {
                 </span>
               </div>
 
-              <div className="font-mono text-center text-lg font-bold tracking-widest text-amber-400 bg-black/40 py-2.5 px-3 rounded-lg border border-white/10 select-all">
+              <div
+                dir="ltr"
+                className="font-mono text-center text-lg font-bold tracking-widest text-amber-400 bg-black/40 py-2.5 px-3 rounded-lg border border-white/10 select-all"
+              >
                 {formattedDisplay}
               </div>
 

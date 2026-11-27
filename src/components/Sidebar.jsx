@@ -27,7 +27,7 @@ export default function Sidebar({
   ]
 
   return (
-    <aside className="w-72 bg-white border-l border-slate-200 flex flex-col shrink-0 min-h-screen shadow-sm select-none">
+    <aside className="w-72 bg-white border-l border-slate-200 flex flex-col shrink-0 h-full lg:h-screen lg:sticky lg:top-0 overflow-y-auto shadow-sm select-none">
       {/* Brand & App Title */}
       <div className="p-6 border-b border-slate-100">
         <div className="flex items-center gap-3">
